@@ -168,6 +168,79 @@ async function run() {
             res.send(result);
         });
 
+        app.get("/api/users/all-tickets", async (req, res) => {
+            const {
+                from = "",
+                to = "",
+                transportType = "",
+                sort = "",
+                page = 1,
+                limit = 6,
+            } = req.query;
+
+
+            const filter = {
+                verificationStatus: "approved",
+            };
+
+
+            if(from){
+                filter.from = {
+                    $regex : from , $options : "i"
+                }
+            }
+
+            
+
+            if(to){
+                filter.to = {
+                    $regex : to , $options : "i"
+                }
+            }
+
+
+            if(transportType){
+                filter.transportType = transportType
+            }
+
+            let sortOption = {createdAt : -1};
+
+            if(sort==="low"){
+                sortOption = {price : 1} 
+            }
+            else if(sort === "high") {
+                sortOption : {price : -1};
+            }
+
+            const pageNumber =parseInt(page) || 1;
+            const limitNumber = parseInt(limit);
+            const skip = (pageNumber -1) * limitNumber ;
+
+
+
+            
+
+
+            const result = await TicketCollection.find(filter).sort(sortOption).skip(skip).limit(limitNumber).toArray();
+
+            const totalItems = await TicketCollection.countDocuments(filter);
+            const totalPages = Math.ceil(totalItems / limitNumber);
+            
+            
+            res.send({
+            success: true,
+            data: result,
+            pagination: {
+                currentPage: pageNumber,
+                totalPages,
+                totalItems,
+                perPage: limitNumber,
+            },
+        });
+
+        
+        });
+
         // Approve ticket
         app.patch("/api/admin/tickets/:ticketId/approve", async (req, res) => {
             const { ticketId } = req.params;
