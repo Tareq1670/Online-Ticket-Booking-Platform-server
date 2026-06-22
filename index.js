@@ -32,6 +32,7 @@ async function run() {
 
         const UserCollection = db.collection("user");
         const TicketCollection = db.collection("tickets");
+        const BookingCollection = db.collection("bookings");
 
         // Ticket Add
         app.post("/api/add-ticket", async (req, res) => {
@@ -168,6 +169,7 @@ async function run() {
             res.send(result);
         });
 
+        // All Tickets
         app.get("/api/users/all-tickets", async (req, res) => {
             const {
                 from = "",
@@ -178,67 +180,79 @@ async function run() {
                 limit = 6,
             } = req.query;
 
-
             const filter = {
                 verificationStatus: "approved",
             };
 
-
-            if(from){
+            if (from) {
                 filter.from = {
-                    $regex : from , $options : "i"
-                }
+                    $regex: from,
+                    $options: "i",
+                };
             }
 
-            
-
-            if(to){
+            if (to) {
                 filter.to = {
-                    $regex : to , $options : "i"
+                    $regex: to,
+                    $options: "i",
+                };
+            }
+
+            if (transportType) {
+                filter.transportType = transportType;
+            }
+
+            let sortOption = { createdAt: -1 };
+
+            if (sort === "low") {
+                sortOption = { price: 1 };
+            } else if (sort === "high") {
+                sortOption: {
+                    price: -1;
                 }
             }
 
-
-            if(transportType){
-                filter.transportType = transportType
-            }
-
-            let sortOption = {createdAt : -1};
-
-            if(sort==="low"){
-                sortOption = {price : 1} 
-            }
-            else if(sort === "high") {
-                sortOption : {price : -1};
-            }
-
-            const pageNumber =parseInt(page) || 1;
+            const pageNumber = parseInt(page) || 1;
             const limitNumber = parseInt(limit);
-            const skip = (pageNumber -1) * limitNumber ;
+            const skip = (pageNumber - 1) * limitNumber;
 
-
-
-            
-
-
-            const result = await TicketCollection.find(filter).sort(sortOption).skip(skip).limit(limitNumber).toArray();
+            const result = await TicketCollection.find(filter)
+                .sort(sortOption)
+                .skip(skip)
+                .limit(limitNumber)
+                .toArray();
 
             const totalItems = await TicketCollection.countDocuments(filter);
             const totalPages = Math.ceil(totalItems / limitNumber);
-            
-            
+
             res.send({
-            success: true,
-            data: result,
-            pagination: {
-                currentPage: pageNumber,
-                totalPages,
-                totalItems,
-                perPage: limitNumber,
-            },
+                success: true,
+                data: result,
+                pagination: {
+                    currentPage: pageNumber,
+                    totalPages,
+                    totalItems,
+                    perPage: limitNumber,
+                },
+            });
         });
 
-        
+        // Single Ticket By Id
+        app.get("/api/tickets/:id", async (req, res) => {
+            const { id } = req.params;
+            const query = { _id: new ObjectId(id) };
+            const result = await TicketCollection.findOne(query);
+            if (!result) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Ticket not found",
+                });
+            }
+
+            res.send({
+                success: true,
+                data: result,
+            });
         });
 
         // Approve ticket
@@ -568,6 +582,101 @@ async function run() {
         console.log(
             "Pinged your deployment. You successfully connected to MongoDB!",
         );
+
+        // Ticket Book By Users
+        app.post("/api/bookings", async (req, res) => {
+            const {
+                ticketId,
+                userId,
+                userName,
+                userEmail,
+                quantity,
+                unitPrice,
+                totalPrice,
+                title,
+                from,
+                to,
+                transportType,
+                departureDate,
+                image,
+                vendorId,
+                vendorEmail,
+                vendorName,
+            } = req.body;
+
+            if (!ticketId || !userId || !quantity || !unitPrice) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Missing required fields",
+                });
+            }
+
+            const ticket = await TicketCollection.findOne({
+                _id: new ObjectId(ticketId),
+            });
+
+            if (!ticket) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Ticket not found",
+                });
+            }
+
+            if (new Date(ticket.departureDate) < new Date()) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Departure date has already passed",
+                });
+            }
+
+            if (ticket.quantity <= 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Ticket is sold out",
+                });
+            }
+
+            if (Number(quantity) > ticket.quantity) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Only ${ticket.quantity} seats available`,
+                });
+            }
+
+            const booking = {
+                ticketId,
+                userId,
+                userName,
+                userEmail,
+                quantity: Number(quantity),
+                unitPrice: Number(unitPrice),
+                totalPrice: Number(totalPrice),
+                title,
+                from,
+                to,
+                transportType,
+                departureDate,
+                image: image || "",
+                vendorId,
+                vendorEmail,
+                vendorName,
+                status: "pending",
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            };
+
+            const result = await BookingCollection.insertOne(booking);
+
+            res.status(201).json({
+                success: true,
+                insertedId: result.insertedId,
+                message: "Booking created successfully",
+            });
+        });
+
+
+
+
     } finally {
         // await client.close();
     }
