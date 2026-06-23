@@ -183,35 +183,16 @@ async function run() {
 
             const filter = {
                 verificationStatus: "approved",
+                isFraudVendor: { $ne: true },
             };
 
-            if (from) {
-                filter.from = {
-                    $regex: from,
-                    $options: "i",
-                };
-            }
-
-            if (to) {
-                filter.to = {
-                    $regex: to,
-                    $options: "i",
-                };
-            }
-
-            if (transportType) {
-                filter.transportType = transportType;
-            }
+            if (from) filter.from = { $regex: from, $options: "i" };
+            if (to) filter.to = { $regex: to, $options: "i" };
+            if (transportType) filter.transportType = transportType;
 
             let sortOption = { createdAt: -1 };
-
-            if (sort === "low") {
-                sortOption = { price: 1 };
-            } else if (sort === "high") {
-                sortOption: {
-                    price: -1;
-                }
-            }
+            if (sort === "low") sortOption = { price: 1 };
+            else if (sort === "high") sortOption = { price: -1 };
 
             const pageNumber = parseInt(page) || 1;
             const limitNumber = parseInt(limit);
@@ -241,12 +222,16 @@ async function run() {
         // Single Ticket By Id
         app.get("/api/tickets/:id", async (req, res) => {
             const { id } = req.params;
-            const query = { _id: new ObjectId(id) };
-            const result = await TicketCollection.findOne(query);
+
+            const result = await TicketCollection.findOne({
+                _id: new ObjectId(id),
+                isFraudVendor: { $ne: true },
+            });
+
             if (!result) {
                 return res.status(404).json({
                     success: false,
-                    message: "Ticket not found",
+                    message: "Ticket not found or unavailable",
                 });
             }
 
@@ -407,15 +392,17 @@ async function run() {
             },
         );
 
-        // Get advertised tickets (for homepage)
+        // Get advertised tickets
         app.get("/api/advertised-tickets", async (req, res) => {
             const result = await TicketCollection.find({
                 isAdvertised: true,
                 verificationStatus: "approved",
+                isFraudVendor: { $ne: true },
             })
                 .sort({ advertisedAt: -1 })
                 .limit(6)
                 .toArray();
+
             res.send(result);
         });
 
@@ -558,31 +545,81 @@ async function run() {
             const { id } = req.params;
             const { isFraud } = req.body;
 
-            const result = await UserCollection.updateOne(
-                { _id: new ObjectId(id) },
-                {
-                    $set: {
-                        isFraud: isFraud,
-                        status: isFraud ? "fraud" : "active",
+            try {
+                const user = await UserCollection.findOne({
+                    _id: new ObjectId(id),
+                });
+
+                if (!user) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "User not found",
+                    });
+                }
+
+                if (user.role !== "vendor") {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Fraud status can only be applied to vendors",
+                    });
+                }
+
+                if (user.isFraud === isFraud) {
+                    return res.status(400).json({
+                        success: false,
+                        message: isFraud
+                            ? "Vendor is already marked as fraud"
+                            : "Vendor is already active",
+                    });
+                }
+
+                // User update
+                await UserCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            isFraud: isFraud,
+                            status: isFraud ? "fraud" : "active",
+                            updatedAt: new Date(),
+                        },
                     },
-                },
-            );
+                );
 
-            if (result.matchedCount === 0)
-                return res
-                    .status(404)
-                    .send({ success: false, message: "User not found" });
+                // Vendor এর সব tickets update
+                const vendorId = user._id.toString();
 
-            res.send({
-                success: true,
-                message: `Fraud status updated to ${isFraud}`,
-            });
+                const ticketUpdateResult = await TicketCollection.updateMany(
+                    {
+                        $or: [
+                            { vendorId: vendorId },
+                            { vendorEmail: user.email },
+                        ],
+                    },
+                    {
+                        $set: {
+                            isFraudVendor: isFraud,
+                            updatedAt: new Date(),
+                        },
+                    },
+                );
+
+                return res.status(200).json({
+                    success: true,
+                    message: isFraud
+                        ? `Vendor marked as fraud. ${ticketUpdateResult.modifiedCount} tickets hidden.`
+                        : `Vendor restored. ${ticketUpdateResult.modifiedCount} tickets visible again.`,
+                    data: {
+                        ticketsAffected: ticketUpdateResult.modifiedCount,
+                    },
+                });
+            } catch (error) {
+                console.error("Fraud update error:", error);
+                return res.status(500).json({
+                    success: false,
+                    message: "Internal server error",
+                });
+            }
         });
-
-        await client.db("admin").command({ ping: 1 });
-        console.log(
-            "Pinged your deployment. You successfully connected to MongoDB!",
-        );
 
         // Ticket Book By Users
         app.post("/api/bookings", async (req, res) => {
@@ -1176,6 +1213,11 @@ async function run() {
                 });
             }
         });
+
+        await client.db("admin").command({ ping: 1 });
+        console.log(
+            "Pinged your deployment. You successfully connected to MongoDB!",
+        );
     } finally {
         // await client.close();
     }
