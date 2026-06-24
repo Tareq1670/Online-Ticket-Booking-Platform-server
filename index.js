@@ -1218,6 +1218,25 @@ async function run() {
         console.log(
             "Pinged your deployment. You successfully connected to MongoDB!",
         );
+
+        // Get latest 6 approved tickets
+        app.get("/api/latest-tickets", async (req, res) => {
+            const limit = 6;
+
+            const result = await TicketCollection.find({
+                verificationStatus: "approved",
+                isFraudVendor: { $ne: true },
+            })
+                .sort({ createdAt: -1 })
+                .limit(limit)
+                .toArray();
+
+            res.status(200).json({
+                success: true,
+                data: result,
+                count: result.length,
+            });
+        });
     } finally {
         // await client.close();
     }
